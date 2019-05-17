@@ -18,6 +18,8 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <numeric>
+#include <sstream>
 
 #include "helper_functions.h"
 
@@ -34,9 +36,9 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 100;  // TODO: Set the number of particles
+  num_particles = 3;  // TODO: Set the number of particles
   
-  std::default_random_engine gen;
+  static std::default_random_engine gen;
   weights.resize(num_particles);
   particles.resize(num_particles);
   
@@ -73,14 +75,14 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
   for (int i=0; i<num_particles; ++i) {
     // Watch out for very small numbers of yaw rate in division
     if(fabs(yaw_rate) < 0.0001) {
-      particles[i].x = velocity*delta_t*cos(particles[i].theta);
-      particles[i].y = velocity*delta_t*sin(particles[i].theta);
+      particles[i].x = particles[i].x + velocity*delta_t*cos(particles[i].theta);
+      particles[i].y = particles[i].y + velocity*delta_t*sin(particles[i].theta);
     } else {
       // Noise is added with '+ dist_x(gen)'
       particles[i].x = particles[i].x + (velocity/yaw_rate)*(sin(particles[i].theta + yaw_rate*delta_t) - sin(particles[i].theta)) + dist_x(gen);
       // Noise is added with '+ dist_y(gen)'
       particles[i].y = particles[i].y + (velocity/yaw_rate)*(cos(particles[i].theta) - cos(particles[i].theta + yaw_rate*delta_t)) + dist_y(gen);
-    particles[i].theta = particles[i].theta + yaw_rate*delta_t + dist_theta(gen);
+      particles[i].theta = particles[i].theta + yaw_rate*delta_t + dist_theta(gen);
     }
   }
 }
@@ -124,12 +126,17 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
    *   and the following is a good resource for the actual equation to implement
    *   (look at equation 3.33) http://planning.cs.uiuc.edu/node99.html
    */
-  auto covar_x = std_landmark[0] * std_landmark[0];
-  auto covar_y = std_landmark[1] * std_landmark[1];
-  auto gaussian_norm = 2.0 * M_PI * std_landmark[0] * std_landmark[1];
+  double covar_x = std_landmark[0] * std_landmark[0];
+  double covar_y = std_landmark[1] * std_landmark[1];
+  double gaussian_norm = 2.0 * M_PI * std_landmark[0] * std_landmark[1];
+  std::cout << "Cov_x " << covar_x << std::endl;
+  std::cout << "Cov_y " << covar_y << std::endl;
+  std::cout << "Norm " << gaussian_norm << std::endl;
   
   for (int i=0; i<num_particles; ++i) {
     vector<LandmarkObs> pred_landmarks;
+    double cos_theta = cos(particles[i].theta);
+    double sin_theta = sin(particles[i].theta);
     
     for (unsigned int j=0; j<map_landmarks.landmark_list.size(); ++j) {
       float landm_x = map_landmarks.landmark_list[j].x_f;
@@ -138,7 +145,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
       
       if(dist(landm_x, landm_y, particles[i].x, particles[i].y) <= sensor_range) {
         pred_landmarks.push_back(LandmarkObs{landm_id, landm_x, landm_y});
-	  }
+      }
     }
     
     if(pred_landmarks.size() == 0) {
@@ -146,20 +153,23 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
       weights[i] = 0;
     } else {
       vector<LandmarkObs> trans_obs;
+      trans_obs.resize(observations.size());
       for (unsigned int k=0; k<observations.size(); ++k) {
-        double cos_theta = cos(particles[i].theta);
-        double sin_theta = sin(particles[i].theta);
         trans_obs[k].x = particles[i].x + cos_theta * observations[k].x - sin_theta * observations[k].y;
         trans_obs[k].y = particles[i].y + sin_theta * observations[k].x + cos_theta * observations[k].y;
+        trans_obs[k].id = observations[k].id;
       }
       
       dataAssociation(pred_landmarks, trans_obs);
       
-      double prob =1.0;
+      double prob = 1.0;
       for (unsigned int l=0; l<trans_obs.size(); ++l) {
         double dx = trans_obs[l].x - pred_landmarks[trans_obs[l].id].x;
         double dy = trans_obs[l].y - pred_landmarks[trans_obs[l].id].y;
+        std::cout << "dx " << dx << std::endl;
+        std::cout << "dy " << dy << std::endl;
         prob *= exp(-(dx*dx / (2*covar_x) + dy*dy / (2*covar_y))) / gaussian_norm;
+        std::cout << "Inter prob " << prob << std::endl;
       }
       particles[i].weight = prob;
       weights[i] = prob;
@@ -176,6 +186,7 @@ void ParticleFilter::resample() {
    */
   std::default_random_engine gen;
   double maxW = *std::max_element(weights.begin(), weights.end());
+  
   std::uniform_real_distribution<double> dist_double(0.0, maxW);
   std::uniform_int_distribution<int> dist_int(0, num_particles - 1);
   
